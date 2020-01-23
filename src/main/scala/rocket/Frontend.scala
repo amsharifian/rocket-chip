@@ -111,7 +111,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   val s2_btb_resp_valid = if (usingBTB) Reg(Bool()) else false.B
   val s2_btb_resp_bits = Reg(new BTBResp)
   val s2_btb_taken = s2_btb_resp_valid && s2_btb_resp_bits.taken
-  val s2_tlb_resp = Reg(tlb.io.resp)
+  val s2_tlb_resp = Reg(tlb.io.resp.head)
   val s2_xcpt = s2_tlb_resp.ae.inst || s2_tlb_resp.pf.inst
   val s2_speculative = Reg(init=Bool(false))
   val s2_partial_insn_valid = RegInit(false.B)
@@ -141,14 +141,14 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
     s2_valid := !s2_redirect
     s2_pc := s1_pc
     s2_speculative := s1_speculative
-    s2_tlb_resp := tlb.io.resp
+    s2_tlb_resp := tlb.io.resp.head
   }
 
   io.ptw <> tlb.io.ptw
-  tlb.io.req.valid := s1_valid && !s2_replay
-  tlb.io.req.bits.vaddr := s1_pc
-  tlb.io.req.bits.passthrough := Bool(false)
-  tlb.io.req.bits.size := log2Ceil(coreInstBytes*fetchWidth)
+  tlb.io.req.head.valid := s1_valid && !s2_replay
+  tlb.io.req.head.bits.vaddr := s1_pc
+  tlb.io.req.head.bits.passthrough := Bool(false)
+  tlb.io.req.head.bits.size := log2Ceil(coreInstBytes*fetchWidth)
   tlb.io.sfence := io.cpu.sfence
   tlb.io.kill := !s2_valid
 
@@ -156,9 +156,9 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
   icache.io.req.valid := s0_valid
   icache.io.req.bits.addr := io.cpu.npc
   icache.io.invalidate := io.cpu.flush_icache
-  icache.io.s1_paddr := tlb.io.resp.paddr
+  icache.io.s1_paddr := tlb.io.resp.head.paddr
   icache.io.s2_vaddr := s2_pc
-  icache.io.s1_kill := s2_redirect || tlb.io.resp.miss || s2_replay
+  icache.io.s1_kill := s2_redirect || tlb.io.resp.head.miss || s2_replay
   val s2_can_speculatively_refill = s2_tlb_resp.cacheable && !io.ptw.customCSRs.asInstanceOf[RocketCustomCSRs].disableSpeculativeICacheRefill
   icache.io.s2_kill := s2_speculative && !s2_can_speculatively_refill || s2_xcpt
   icache.io.s2_prefetch := s2_tlb_resp.prefetchable && !io.ptw.customCSRs.asInstanceOf[RocketCustomCSRs].disableICachePrefetch
@@ -334,7 +334,7 @@ class FrontendModule(outer: Frontend) extends LazyModuleImp(outer)
     io.cpu.might_request || // chicken bit
     icache.io.keep_clock_enabled || // I$ miss or ITIM access
     s1_valid || s2_valid || // some fetch in flight
-    !tlb.io.req.ready || // handling TLB miss
+    !tlb.io.req.head.ready || // handling TLB miss
     !fq.io.mask(fq.io.mask.getWidth-1) // queue not full
   } // leaving gated-clock domain
 

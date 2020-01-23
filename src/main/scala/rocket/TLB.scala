@@ -58,10 +58,10 @@ case class TLBConfig(
     nSectors: Int = 4,
     nSuperpageEntries: Int = 4)
 
-class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(p) {
+class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig, nReqs: Int = 1)(implicit edge: TLEdgeOut, p: Parameters) extends CoreModule()(p) {
   val io = new Bundle {
-    val req = Decoupled(new TLBReq(lgMaxSize)).flip
-    val resp = new TLBResp().asOutput
+    val req = Vec(nReqs, Decoupled(new TLBReq(lgMaxSize))).flip
+    val resp = Vec(nReqs, new TLBResp()).asOutput
     val sfence = Valid(new SFenceReq).asInput
     val ptw = new TLBPTWIO
     val kill = Bool(INPUT) // suppress a TLB refill, one cycle after a miss
@@ -175,34 +175,29 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val priv = if (instruction) io.ptw.status.prv else io.ptw.status.dprv
   val priv_s = priv(0)
   val priv_uses_vm = priv <= PRV.S
-  val vm_enabled = Bool(usingVM) && io.ptw.ptbr.mode(io.ptw.ptbr.mode.getWidth-1) && priv_uses_vm && !io.req.bits.passthrough
+  val vm_enabled = Bool(usingVM) && io.ptw.ptbr.mode(io.ptw.ptbr.mode.getWidth-1) && priv_uses_vm && !io.req.head.bits.passthrough
 
-  // share a single physical memory attribute checker (unshare if critical path)
-  val vpn = io.req.bits.vaddr(vaddrBits-1, pgIdxBits)
-  val refill_ppn = io.ptw.resp.bits.pte.ppn(ppnBits-1, 0)
-  val do_refill = Bool(usingVM) && io.ptw.resp.valid
-  val invalidate_refill = state.isOneOf(s_request /* don't care */, s_wait_invalidate)
-  val mpu_ppn = Mux(do_refill, refill_ppn,
-                Mux(vm_enabled && special_entry.nonEmpty, special_entry.map(_.ppn(vpn)).getOrElse(0.U), io.req.bits.vaddr >> pgIdxBits))
-  val mpu_physaddr = Cat(mpu_ppn, io.req.bits.vaddr(pgIdxBits-1, 0))
-  val mpu_priv = Mux[UInt](Bool(usingVM) && (do_refill || io.req.bits.passthrough /* PTW */), PRV.S, Cat(io.ptw.status.debug, priv))
-  val pmp = Module(new PMPChecker(lgMaxSize))
-  pmp.io.addr := mpu_physaddr
-  pmp.io.size := io.req.bits.size
-  pmp.io.pmp := (io.ptw.pmp: Seq[PMP])
-  pmp.io.prv := mpu_priv
-  val legal_address = edge.manager.findSafe(mpu_physaddr).reduce(_||_)
-  def fastCheck(member: TLManagerParameters => Boolean) =
-    legal_address && edge.manager.fastProperty(mpu_physaddr, member, (b:Boolean) => Bool(b))
-  val cacheable = fastCheck(_.supportsAcquireT) && (instruction || !usingDataScratchpad)
-  val homogeneous = TLBPageLookup(edge.manager.managers, xLen, p(CacheBlockBytes), BigInt(1) << pgIdxBits)(mpu_physaddr).homogeneous
-  val deny_access_to_debug = mpu_priv <= PRV.M && p(DebugModuleKey).map(dmp => dmp.address.contains(mpu_physaddr)).getOrElse(false)
-  val prot_r = fastCheck(_.supportsGet) && !deny_access_to_debug && pmp.io.r
-  val prot_w = fastCheck(_.supportsPutFull) && !deny_access_to_debug && pmp.io.w
-  val prot_al = fastCheck(_.supportsLogical)
-  val prot_aa = fastCheck(_.supportsArithmetic)
-  val prot_x = fastCheck(_.executable) && !deny_access_to_debug && pmp.io.x
-  val prot_eff = fastCheck(Seq(RegionType.PUT_EFFECTS, RegionType.GET_EFFECTS) contains _.regionType)
+  val vpn = io.req.head.bits.vaddr(vaddrBits-1, pgIdxBits)
+  val req_ppn = Mux(vm_enabled && special_entry.nonEmpty, special_entry.map(_.ppn(vpn)).getOrElse(0.U), io.req.head.bits.vaddr >> pgIdxBits)
+  val req_physaddr = Cat(req_ppn, io.req.head.bits.vaddr(pgIdxBits-1, 0))
+  val req_priv = Mux[UInt](Bool(usingVM) && io.req.head.bits.passthrough /* PTW */, PRV.S, Cat(io.ptw.status.debug, priv))
+  val req_pmp = Module(new PMPChecker(lgMaxSize))
+  req_pmp.io.addr := req_physaddr
+  req_pmp.io.size := io.req.head.bits.size
+  req_pmp.io.pmp := (io.ptw.pmp: Seq[PMP])
+  req_pmp.io.prv := req_priv
+  val req_legal_address = edge.manager.findSafe(req_physaddr).reduce(_||_)
+  def fastCheck(legal_address: Bool, physaddr: UInt, member: TLManagerParameters => Boolean) =
+    legal_address && edge.manager.fastProperty(physaddr, member, (b:Boolean) => Bool(b))
+  val req_homogeneous = TLBPageLookup(edge.manager.managers, xLen, p(CacheBlockBytes), BigInt(1) << pgIdxBits)(req_physaddr).homogeneous
+  val req_deny_access_to_debug = req_priv <= PRV.M && p(DebugModuleKey).map(dmp => dmp.address.contains(req_physaddr)).getOrElse(false)
+  val req_cacheable = fastCheck(req_legal_address, req_physaddr, _.supportsAcquireT) && (Bool(instruction) || !usingDataScratchpad)
+  val req_prot_r    = fastCheck(req_legal_address, req_physaddr, _.supportsGet)     && !req_deny_access_to_debug && req_pmp.io.r
+  val req_prot_w    = fastCheck(req_legal_address, req_physaddr, _.supportsPutFull) && !req_deny_access_to_debug && req_pmp.io.w
+  val req_prot_al   = fastCheck(req_legal_address, req_physaddr, _.supportsLogical)
+  val req_prot_aa   = fastCheck(req_legal_address, req_physaddr, _.supportsArithmetic)
+  val req_prot_x    = fastCheck(req_legal_address, req_physaddr, _.executable)      && !req_deny_access_to_debug && req_pmp.io.x
+  val req_prot_eff  = fastCheck(req_legal_address, req_physaddr, Seq(RegionType.PUT_EFFECTS, RegionType.GET_EFFECTS) contains _.regionType)
 
   val sector_hits = sectored_entries.map(_.sectorHit(vpn))
   val superpage_hits = superpage_entries.map(_.hit(vpn))
@@ -211,24 +206,45 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val hits = Cat(!vm_enabled, real_hits)
   val ppn = Mux1H(hitsVec :+ !vm_enabled, all_entries.map(_.ppn(vpn)) :+ vpn(ppnBits-1, 0))
 
+  val refill_ppn = io.ptw.resp.bits.pte.ppn(ppnBits-1, 0)
+  val do_refill = Bool(usingVM) && io.ptw.resp.valid
+  val invalidate_refill = state.isOneOf(s_request /* don't care */, s_wait_invalidate)
+  val refill_physaddr = Cat(refill_ppn, io.req.head.bits.vaddr(pgIdxBits-1, 0))
+  val refill_priv = Mux[UInt](Bool(usingVM), PRV.S, Cat(io.ptw.status.debug, priv))
+  val refill_pmp = Module(new PMPChecker(lgMaxSize))
+  refill_pmp.io.addr := refill_physaddr
+  refill_pmp.io.size := io.req.head.bits.size
+  refill_pmp.io.pmp := (io.ptw.pmp: Seq[PMP])
+  refill_pmp.io.prv := refill_priv
+  val refill_legal_address = edge.manager.findSafe(refill_physaddr).reduce(_||_)
+  val refill_homogeneous = TLBPageLookup(edge.manager.managers, xLen, p(CacheBlockBytes), BigInt(1) << pgIdxBits)(refill_physaddr).homogeneous
+  val refill_deny_access_to_debug = refill_priv <= PRV.M && p(DebugModuleKey).map(dmp => dmp.address.contains(refill_physaddr)).getOrElse(false)
+  val refill_cacheable = fastCheck(refill_legal_address, refill_physaddr, _.supportsAcquireT) && (Bool(instruction) || !usingDataScratchpad)
+  val refill_prot_r    = fastCheck(refill_legal_address, refill_physaddr, _.supportsGet)     && !refill_deny_access_to_debug && refill_pmp.io.r
+  val refill_prot_w    = fastCheck(refill_legal_address, refill_physaddr, _.supportsPutFull) && !refill_deny_access_to_debug && refill_pmp.io.w
+  val refill_prot_al   = fastCheck(refill_legal_address, refill_physaddr, _.supportsLogical)
+  val refill_prot_aa   = fastCheck(refill_legal_address, refill_physaddr, _.supportsArithmetic)
+  val refill_prot_x    = fastCheck(refill_legal_address, refill_physaddr, _.executable)      && !refill_deny_access_to_debug && refill_pmp.io.x
+  val refill_prot_eff  = fastCheck(refill_legal_address, refill_physaddr, Seq(RegionType.PUT_EFFECTS, RegionType.GET_EFFECTS) contains _.regionType)
+
   // permission bit arrays
   when (do_refill && !invalidate_refill) {
     val pte = io.ptw.resp.bits.pte
     val newEntry = Wire(new EntryData)
     newEntry.ppn := pte.ppn
-    newEntry.c := cacheable
-    newEntry.u := pte.u
-    newEntry.g := pte.g && pte.v
-    newEntry.ae := io.ptw.resp.bits.ae
-    newEntry.sr := pte.sr()
-    newEntry.sw := pte.sw()
-    newEntry.sx := pte.sx()
-    newEntry.pr := prot_r
-    newEntry.pw := prot_w
-    newEntry.px := prot_x
-    newEntry.pal := prot_al
-    newEntry.paa := prot_aa
-    newEntry.eff := prot_eff
+    newEntry.c   := refill_cacheable
+    newEntry.u   := pte.u
+    newEntry.g   := pte.g && pte.v
+    newEntry.ae  := io.ptw.resp.bits.ae
+    newEntry.sr  := pte.sr()
+    newEntry.sw  := pte.sw()
+    newEntry.sx  := pte.sx()
+    newEntry.pr  := refill_prot_r
+    newEntry.pw  := refill_prot_w
+    newEntry.px  := refill_prot_x
+    newEntry.pal := refill_prot_al
+    newEntry.paa := refill_prot_aa
+    newEntry.eff := refill_prot_eff
     newEntry.fragmented_superpage := io.ptw.resp.bits.fragmented_superpage
 
     when (special_entry.nonEmpty && !io.ptw.resp.bits.homogeneous) {
@@ -252,38 +268,38 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val ptw_ae_array = Cat(false.B, entries.map(_.ae).asUInt)
   val priv_rw_ok = Mux(!priv_s || io.ptw.status.sum, entries.map(_.u).asUInt, 0.U) | Mux(priv_s, ~entries.map(_.u).asUInt, 0.U)
   val priv_x_ok = Mux(priv_s, ~entries.map(_.u).asUInt, entries.map(_.u).asUInt)
-  val r_array = Cat(true.B, priv_rw_ok & (entries.map(_.sr).asUInt | Mux(io.ptw.status.mxr, entries.map(_.sx).asUInt, UInt(0))))
-  val w_array = Cat(true.B, priv_rw_ok & entries.map(_.sw).asUInt)
-  val x_array = Cat(true.B, priv_x_ok & entries.map(_.sx).asUInt)
-  val pr_array = Cat(Fill(nPhysicalEntries, prot_r), normal_entries.map(_.pr).asUInt) & ~ptw_ae_array
-  val pw_array = Cat(Fill(nPhysicalEntries, prot_w), normal_entries.map(_.pw).asUInt) & ~ptw_ae_array
-  val px_array = Cat(Fill(nPhysicalEntries, prot_x), normal_entries.map(_.px).asUInt) & ~ptw_ae_array
-  val eff_array = Cat(Fill(nPhysicalEntries, prot_eff), normal_entries.map(_.eff).asUInt)
-  val c_array = Cat(Fill(nPhysicalEntries, cacheable), normal_entries.map(_.c).asUInt)
-  val paa_array = Cat(Fill(nPhysicalEntries, prot_aa), normal_entries.map(_.paa).asUInt)
-  val pal_array = Cat(Fill(nPhysicalEntries, prot_al), normal_entries.map(_.pal).asUInt)
+  val r_array   = Cat(true.B, priv_rw_ok & (entries.map(_.sr).asUInt | Mux(io.ptw.status.mxr, entries.map(_.sx).asUInt, UInt(0))))
+  val w_array   = Cat(true.B, priv_rw_ok &  entries.map(_.sw).asUInt)
+  val x_array   = Cat(true.B, priv_x_ok  &  entries.map(_.sx).asUInt)
+  val pr_array  = Cat(Fill(nPhysicalEntries, req_prot_r),    normal_entries.map(_.pr).asUInt) & ~ptw_ae_array
+  val pw_array  = Cat(Fill(nPhysicalEntries, req_prot_w),    normal_entries.map(_.pw).asUInt) & ~ptw_ae_array
+  val px_array  = Cat(Fill(nPhysicalEntries, req_prot_x),    normal_entries.map(_.px).asUInt) & ~ptw_ae_array
+  val eff_array = Cat(Fill(nPhysicalEntries, req_prot_eff),  normal_entries.map(_.eff).asUInt)
+  val c_array   = Cat(Fill(nPhysicalEntries, req_cacheable), normal_entries.map(_.c).asUInt)
+  val paa_array = Cat(Fill(nPhysicalEntries, req_prot_aa),   normal_entries.map(_.paa).asUInt)
+  val pal_array = Cat(Fill(nPhysicalEntries, req_prot_al),   normal_entries.map(_.pal).asUInt)
   val paa_array_if_cached = paa_array | Mux(usingAtomicsInCache, c_array, 0.U)
   val pal_array_if_cached = pal_array | Mux(usingAtomicsInCache, c_array, 0.U)
-  val prefetchable_array = Cat((cacheable && homogeneous) << (nPhysicalEntries-1), normal_entries.map(_.c).asUInt)
+  val prefetchable_array = Cat((req_cacheable && req_homogeneous) << (nPhysicalEntries-1), normal_entries.map(_.c).asUInt)
 
-  val misaligned = (io.req.bits.vaddr & (UIntToOH(io.req.bits.size) - 1)).orR
+  val misaligned = (io.req.head.bits.vaddr & (UIntToOH(io.req.head.bits.size) - 1)).orR
   val bad_va = if (!usingVM || (minPgLevels == pgLevels && vaddrBits == vaddrBitsExtended)) false.B else vm_enabled && {
     val nPgLevelChoices = pgLevels - minPgLevels + 1
     val minVAddrBits = pgIdxBits + minPgLevels * pgLevelBits
     (for (i <- 0 until nPgLevelChoices) yield {
       val mask = ((BigInt(1) << vaddrBitsExtended) - (BigInt(1) << (minVAddrBits + i * pgLevelBits - 1))).U
-      val maskedVAddr = io.req.bits.vaddr & mask
+      val maskedVAddr = io.req.head.bits.vaddr & mask
       io.ptw.ptbr.additionalPgLevels === i && !(maskedVAddr === 0 || maskedVAddr === mask)
     }).orR
   }
 
-  val cmd_lrsc = Bool(usingAtomics) && io.req.bits.cmd.isOneOf(M_XLR, M_XSC)
-  val cmd_amo_logical = Bool(usingAtomics) && isAMOLogical(io.req.bits.cmd)
-  val cmd_amo_arithmetic = Bool(usingAtomics) && isAMOArithmetic(io.req.bits.cmd)
-  val cmd_read = isRead(io.req.bits.cmd)
-  val cmd_write = isWrite(io.req.bits.cmd)
+  val cmd_lrsc           = Bool(usingAtomics) && io.req.head.bits.cmd.isOneOf(M_XLR, M_XSC)
+  val cmd_amo_logical    = Bool(usingAtomics) && isAMOLogical(io.req.head.bits.cmd)
+  val cmd_amo_arithmetic = Bool(usingAtomics) && isAMOArithmetic(io.req.head.bits.cmd)
+  val cmd_read  = isRead(io.req.head.bits.cmd)
+  val cmd_write = isWrite(io.req.head.bits.cmd)
   val cmd_write_perms = cmd_write ||
-    io.req.bits.cmd.isOneOf(M_FLUSH_ALL, M_WOK) // not a write, but needs write permissions
+    io.req.head.bits.cmd.isOneOf(M_FLUSH_ALL, M_WOK) // not a write, but needs write permissions
 
   val lrscAllowed = Mux(Bool(usingDataScratchpad || usingAtomicsOnlyForIO), 0.U, c_array)
   val ae_array =
@@ -307,9 +323,9 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   val tlb_hit = real_hits.orR
   val tlb_miss = vm_enabled && !bad_va && !tlb_hit
 
-  val sectored_plru = new PseudoLRU(sectored_entries.size)
+  val sectored_plru  = new PseudoLRU(sectored_entries.size)
   val superpage_plru = new PseudoLRU(superpage_entries.size)
-  when (io.req.valid && vm_enabled) {
+  when (io.req.head.valid && vm_enabled) {
     when (sector_hits.orR) { sectored_plru.access(OHToUInt(sector_hits)) }
     when (superpage_hits.orR) { superpage_plru.access(OHToUInt(superpage_hits)) }
   }
@@ -321,21 +337,21 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
   // a miss on duplicate entries.
   val multipleHits = PopCountAtLeast(real_hits, 2)
 
-  io.req.ready := state === s_ready
-  io.resp.pf.ld := (bad_va && cmd_read) || (pf_ld_array & hits).orR
-  io.resp.pf.st := (bad_va && cmd_write_perms) || (pf_st_array & hits).orR
-  io.resp.pf.inst := bad_va || (pf_inst_array & hits).orR
-  io.resp.ae.ld := (ae_ld_array & hits).orR
-  io.resp.ae.st := (ae_st_array & hits).orR
-  io.resp.ae.inst := (~px_array & hits).orR
-  io.resp.ma.ld := (ma_ld_array & hits).orR
-  io.resp.ma.st := (ma_st_array & hits).orR
-  io.resp.ma.inst := false // this is up to the pipeline to figure out
-  io.resp.cacheable := (c_array & hits).orR
-  io.resp.must_alloc := (must_alloc_array & hits).orR
-  io.resp.prefetchable := (prefetchable_array & hits).orR && edge.manager.managers.forall(m => !m.supportsAcquireB || m.supportsHint)
-  io.resp.miss := do_refill || tlb_miss || multipleHits
-  io.resp.paddr := Cat(ppn, io.req.bits.vaddr(pgIdxBits-1, 0))
+  io.req.head.ready := state === s_ready
+  io.resp.head.pf.ld := (bad_va && cmd_read)        || (pf_ld_array & hits).orR
+  io.resp.head.pf.st := (bad_va && cmd_write_perms) || (pf_st_array & hits).orR
+  io.resp.head.pf.inst := bad_va || (pf_inst_array & hits).orR
+  io.resp.head.ae.ld := (ae_ld_array & hits).orR
+  io.resp.head.ae.st := (ae_st_array & hits).orR
+  io.resp.head.ae.inst := (~px_array & hits).orR
+  io.resp.head.ma.ld := (ma_ld_array & hits).orR
+  io.resp.head.ma.st := (ma_st_array & hits).orR
+  io.resp.head.ma.inst := false // this is up to the pipeline to figure out
+  io.resp.head.cacheable := (c_array & hits).orR
+  io.resp.head.must_alloc := (must_alloc_array & hits).orR
+  io.resp.head.prefetchable := (prefetchable_array & hits).orR && edge.manager.managers.forall(m => !m.supportsAcquireB || m.supportsHint)
+  io.resp.head.miss := do_refill || tlb_miss || multipleHits
+  io.resp.head.paddr := Cat(ppn, io.req.head.bits.vaddr(pgIdxBits-1, 0))
 
   io.ptw.req.valid := state === s_request
   io.ptw.req.bits.valid := !io.kill
@@ -343,7 +359,7 @@ class TLB(instruction: Boolean, lgMaxSize: Int, cfg: TLBConfig)(implicit edge: T
 
   if (usingVM) {
     val sfence = io.sfence.valid
-    when (io.req.fire() && tlb_miss) {
+    when (io.req.head.fire() && tlb_miss) {
       state := s_request
       r_refill_tag := vpn
 

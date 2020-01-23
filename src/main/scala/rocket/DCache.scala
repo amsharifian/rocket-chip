@@ -208,13 +208,13 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s1_cmd_uses_tlb = s1_readwrite || s1_flush_line || s1_req.cmd === M_WOK
   io.ptw <> tlb.io.ptw
   tlb.io.kill := io.cpu.s2_kill
-  tlb.io.req.valid := s1_valid && !io.cpu.s1_kill && s1_cmd_uses_tlb
-  tlb.io.req.bits.passthrough := s1_req.phys
-  tlb.io.req.bits.vaddr := s1_req.addr
-  tlb.io.req.bits.size := s1_req.size
-  tlb.io.req.bits.cmd := s1_req.cmd
-  when (!tlb.io.req.ready && !tlb.io.ptw.resp.valid && !io.cpu.req.bits.phys) { io.cpu.req.ready := false }
-  when (s1_valid && s1_cmd_uses_tlb && tlb.io.resp.miss) { s1_nack := true }
+  tlb.io.req.head.valid := s1_valid && !io.cpu.s1_kill && s1_cmd_uses_tlb
+  tlb.io.req.head.bits.passthrough := s1_req.phys
+  tlb.io.req.head.bits.vaddr := s1_req.addr
+  tlb.io.req.head.bits.size := s1_req.size
+  tlb.io.req.head.bits.cmd := s1_req.cmd
+  when (!tlb.io.req.head.ready && !tlb.io.ptw.resp.valid && !io.cpu.req.bits.phys) { io.cpu.req.ready := false }
+  when (s1_valid && s1_cmd_uses_tlb && tlb.io.resp.head.miss) { s1_nack := true }
 
   tlb.io.sfence.valid := s1_valid && !io.cpu.s1_kill && s1_sfence
   tlb.io.sfence.bits.rs1 := s1_req.size(0)
@@ -222,7 +222,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   tlb.io.sfence.bits.asid := io.cpu.s1_data.data
   tlb.io.sfence.bits.addr := s1_req.addr
 
-  val s1_paddr = tlb.io.resp.paddr
+  val s1_paddr = tlb.io.resp.head.paddr
   val s1_victim_way = Wire(init = replacer.way)
   val (s1_hit_way, s1_hit_state, s1_meta, s1_victim_meta) =
     if (usingDataScratchpad) {
@@ -264,12 +264,12 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s2_req = Reg(io.cpu.req.bits)
   val s2_cmd_flush_all = s2_req.cmd === M_FLUSH_ALL && !s2_req.size(0)
   val s2_cmd_flush_line = s2_req.cmd === M_FLUSH_ALL && s2_req.size(0)
-  val s2_tlb_resp = Reg(tlb.io.resp.cloneType)
+  val s2_tlb_resp = Reg(tlb.io.resp.head.cloneType)
   val s2_uncached_resp_addr = Reg(s2_req.addr.cloneType) // should be DCE'd in synthesis
   when (s1_valid_not_nacked || s1_flush_valid) {
     s2_req := s1_req
     s2_req.addr := s1_paddr
-    s2_tlb_resp := tlb.io.resp
+    s2_tlb_resp := tlb.io.resp.head
   }
   val s2_vaddr = Cat(RegEnable(s1_req.addr, s1_valid_not_nacked || s1_flush_valid) >> pgIdxBits, s2_req.addr(pgIdxBits-1, 0))
   val s2_read = isRead(s2_req.cmd)
@@ -760,7 +760,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
   val s2_isSlavePortAccess = s2_req.no_xcpt
   io.cpu.ordered := !(s1_valid && !s1_isSlavePortAccess || s2_valid && !s2_isSlavePortAccess || cached_grant_wait || uncachedInFlight.asUInt.orR)
 
-  val s1_xcpt_valid = tlb.io.req.valid && !s1_isSlavePortAccess && !s1_nack
+  val s1_xcpt_valid = tlb.io.req.head.valid && !s1_isSlavePortAccess && !s1_nack
   io.cpu.s2_xcpt := Mux(RegNext(s1_xcpt_valid), s2_tlb_resp, 0.U.asTypeOf(s2_tlb_resp))
 
   if (usingDataScratchpad) {
@@ -897,7 +897,7 @@ class DCacheModule(outer: DCache) extends HellaCacheModule(outer) {
     pstore1_held || pstore2_valid ||
     release_state =/= s_ready ||
     release_ack_wait || !release_queue_empty ||
-    !tlb.io.req.ready ||
+    !tlb.io.req.head.ready ||
     cached_grant_wait || uncachedInFlight.asUInt.orR ||
     lrscCount > 0 || blockProbeAfterGrantCount > 0
 

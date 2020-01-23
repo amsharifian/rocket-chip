@@ -721,12 +721,12 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
   val dtlb = Module(new TLB(false, log2Ceil(coreDataBytes), TLBConfig(nTLBEntries)))
   io.ptw <> dtlb.io.ptw
   dtlb.io.kill := io.cpu.s2_kill
-  dtlb.io.req.valid := s1_valid && !io.cpu.s1_kill && s1_readwrite
-  dtlb.io.req.bits.passthrough := s1_req.phys
-  dtlb.io.req.bits.vaddr := s1_req.addr
-  dtlb.io.req.bits.size := s1_req.size
-  dtlb.io.req.bits.cmd := s1_req.cmd
-  when (!dtlb.io.req.ready && !io.cpu.req.bits.phys) { io.cpu.req.ready := Bool(false) }
+  dtlb.io.req.head.valid := s1_valid && !io.cpu.s1_kill && s1_readwrite
+  dtlb.io.req.head.bits.passthrough := s1_req.phys
+  dtlb.io.req.head.bits.vaddr := s1_req.addr
+  dtlb.io.req.head.bits.size := s1_req.size
+  dtlb.io.req.head.bits.cmd := s1_req.cmd
+  when (!dtlb.io.req.head.ready && !io.cpu.req.bits.phys) { io.cpu.req.ready := Bool(false) }
 
   dtlb.io.sfence.valid := s1_valid && !io.cpu.s1_kill && s1_sfence
   dtlb.io.sfence.bits.rs1 := s1_req.size(0)
@@ -751,7 +751,7 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
   when (s2_recycle) {
     s1_req := s2_req
   }
-  val s1_addr = dtlb.io.resp.paddr
+  val s1_addr = dtlb.io.resp.head.paddr
 
   when (s1_clk_en) {
     s2_req.size := s1_req.size
@@ -959,7 +959,7 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
   amoalu.io.rhs := s2_req.data
 
   // nack it like it's hot
-  val s1_nack = dtlb.io.req.valid && dtlb.io.resp.miss || io.cpu.s2_nack ||
+  val s1_nack = dtlb.io.req.head.valid && dtlb.io.resp.head.miss || io.cpu.s2_nack ||
                 s1_req.addr(idxMSB,idxLSB) === prober.io.meta_write.bits.idx && !prober.io.req.ready
   val s2_nack_hit = RegEnable(s1_nack, s1_valid || s1_replay)
   when (s2_nack_hit) { mshrs.io.req.valid := Bool(false) }
@@ -1000,8 +1000,8 @@ class NonBlockingDCacheModule(outer: NonBlockingDCache) extends HellaCacheModule
   io.cpu.ordered := mshrs.io.fence_rdy && !s1_valid && !s2_valid
   io.cpu.replay_next := (s1_replay && s1_read) || mshrs.io.replay_next
 
-  val s1_xcpt_valid = dtlb.io.req.valid && !s1_nack
-  val s1_xcpt = dtlb.io.resp
+  val s1_xcpt_valid = dtlb.io.req.head.valid && !s1_nack
+  val s1_xcpt = dtlb.io.resp.head
   io.cpu.s2_xcpt := Mux(RegNext(s1_xcpt_valid), RegEnable(s1_xcpt, s1_clk_en), 0.U.asTypeOf(s1_xcpt))
   io.cpu.s2_uncached := false.B
   io.cpu.s2_paddr := s2_req.addr
