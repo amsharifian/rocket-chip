@@ -13,3 +13,6 @@
 [submodule "api-config-chipsalliance"]
 	path = api-config-chipsalliance
 	url = https://github.com/chipsalliance/api-config-chipsalliance.git
+[submodule "dandelion"]
+	path = dandelion
+	url = git@csil-git1.cs.surrey.sfu.ca:Dandelion/dandelion-lib.git
