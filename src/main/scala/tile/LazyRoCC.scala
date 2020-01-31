@@ -197,112 +197,66 @@ class AccumulatorExampleModuleImp(outer: AccumulatorExample)(implicit p: Paramet
   with HasCoreParameters {
 
   val regfile = RegInit(VecInit(Seq.fill(outer.n)(0.U(xLen.W))))
-  val busy = RegInit(VecInit(Seq.fill(outer.n)(false.B)))
 
-  val cmd = Queue(io.cmd)
-  val funct = cmd.bits.inst.funct
-  val addr = cmd.bits.rs2(log2Up(outer.n) - 1, 0)
+  //  val cmd = Queue(io.cmd)
+  val funct = io.cmd.bits.inst.funct
+  val addr = io.cmd.bits.rs2(log2Up(outer.n) - 1, 0)
   val doWrite = funct === 0.U
   val doRead = funct === 1.U
-  val doLoad = funct === 2.U
-  //val doAccum = funct === UInt(3)
-  val doAccel = funct === 3.U
+  //  val doLoad = funct === 2.U
+  val doAccum = funct === 3.U
   val memRespTag = io.mem.resp.bits.tag(log2Up(outer.n) - 1, 0)
 
-  val result = RegInit(0.U(xLen.W))
-
   // datapath
-  val addend = cmd.bits.rs1
+  val addend = io.cmd.bits.rs1
+  val accum = regfile(addr)
+  val wdata = Mux(doWrite, addend, accum + addend)
 
-  when(cmd.fire() && (doWrite)) {
-    regfile(addr) := addend
+  val rd = Reg(io.cmd.bits.inst.rd.cloneType)
+
+  val sIdle :: sDone :: Nil = Enum(2)
+  val state = RegInit(sIdle)
+  val cycles = RegInit(0.U)
+
+  when(io.cmd.fire() && doWrite) {
+    regfile(addr) := wdata
   }
 
-  when(io.mem.resp.valid) {
-    regfile(memRespTag) := io.mem.resp.bits.data
-    busy(memRespTag) := false.B
+  when(io.cmd.fire()){
+    state := sDone
+    rd := io.cmd.bits.inst.rd
+  }
+
+  when(io.resp.fire()){
+    state := sIdle
   }
 
   // control
-  when(io.mem.req.fire()) {
-    busy(addr) := true.B
-  }
-
-  //Adding dandelion accel
-  val sIdle :: sBusy :: sFlush :: sDone :: Nil = Enum(4)
-  val state = RegInit(sIdle)
-  val cycles = RegInit(0.U)
-  val last = state === sDone
-  val accelBusy = state === sBusy
-
-  val accel = Module(new test01DF)
-
-  accel.io.MemResp <> DontCare
-  accel.io.MemReq <> DontCare
-
-  when(state === sIdle){
-    cycles := 0.U
-  }.otherwise{
-    cycles := cycles + 1.U
-  }
-
-  //Needs to be input dependent
-  val val_a = Mux((state === sIdle), regfile(0), 0.U)
-  val val_b = Mux((state === sIdle), regfile(1), 0.U)
-
-  accel.io.in.bits.data("field0") := DataBundle(val_a)
-  accel.io.in.bits.data("field1") := DataBundle(val_b)
-
-  accel.io.in.bits.enable := ControlBundle.active()
-
-  accel.io.in.valid := false.B
-  accel.io.out.ready := accelBusy
-
-  switch(state){
-    is(sIdle){
-      when(doAccel){
-        printf(p"Val: val(0): ${val_a}, val(1): ${val_b}\n")
-        accel.io.in.valid := true.B
-        state := sBusy
-      }
-    }
-    is(sBusy){
-      when(accel.io.out.fire){
-        result := accel.io.out.bits.data("field0").data
-        state := sDone
-      }
-    }
-    is(sDone){
-      when(io.resp.fire()){
-        state := sIdle
-      }
-    }
-  }
-
-
-  val doResp = cmd.bits.inst.xd
-  val stallReg = busy(addr)
-  val stallLoad = doLoad && !io.mem.req.ready
+  val doResp = io.cmd.bits.inst.xd
   val stallResp = doResp && !io.resp.ready
 
-  cmd.ready := !stallReg && !stallLoad && !stallResp  && !accelBusy
+  //io.cmd.ready := !stallResp
+  io.cmd.ready := (state === sIdle)
   // command resolved if no stalls AND not issuing a load that will need a request
 
   // PROC RESPONSE INTERFACE
-  io.resp.valid := cmd.valid && doResp && !stallReg && !stallLoad && (state === sIdle)
+//  io.resp.valid := io.cmd.valid
+  io.resp.valid := (state === sDone)
   // valid response if valid command, need a response, and no stalls
-  io.resp.bits.rd := cmd.bits.inst.rd
+  //io.resp.bits.rd := io.cmd.bits.inst.rd
+  io.resp.bits.rd := rd
   // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := result
+  io.resp.bits.data := accum
   // Semantics is to always send out prior accumulator register value
 
-  io.busy := cmd.valid || busy.reduce(_ || _) || accelBusy
+  //io.busy := io.cmd.valid
+  io.busy := (state === sDone)
   // Be busy when have pending memory requests or committed possibility of pending requests
   io.interrupt := false.B
   // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
 
   // MEMORY REQUEST INTERFACE
-  io.mem.req.valid := cmd.valid && doLoad && !stallReg && !stallResp
+  io.mem.req.valid := false.B
   io.mem.req.bits.addr := addend
   io.mem.req.bits.tag := addr
   io.mem.req.bits.cmd := M_XRD // perform a load (M_XWR for stores)
@@ -311,6 +265,118 @@ class AccumulatorExampleModuleImp(outer: AccumulatorExample)(implicit p: Paramet
   io.mem.req.bits.data := 0.U // we're not performing any stores...
   io.mem.req.bits.phys := false.B
 }
+
+
+//class AccumulatorExampleModuleImp(outer: AccumulatorExample)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
+//  with HasCoreParameters {
+//
+//  val regfile = RegInit(VecInit(Seq.fill(outer.n)(0.U(xLen.W))))
+//
+//
+//  //val doLoad = funct === 2.U
+//  //val doAccum = funct === UInt(3)
+//  //val memRespTag = io.mem.resp.bits.tag(log2Up(outer.n) - 1, 0)
+//
+//  val funct = io.cmd.bits.inst.funct
+//  val data = io.cmd.bits.rs1
+//  val addr = io.cmd.bits.rs2(log2Up(outer.n) - 1, 0)
+//  val req_rd = RegEnable(enable = io.cmd.fire, next = io.resp.bits.rd)
+//
+//  val doWrite = funct === 0.U
+//  val doRead = funct === 1.U
+//  val doAccel = funct === 3.U
+//
+//  //Adding dandelion accel
+//  val sIdle :: sBusy :: sDone :: Nil = Enum(3)
+//  val state = RegInit(sIdle)
+//  val cycles = RegInit(0.U)
+//  val last = (state === sDone)
+//
+//  val accel = Module(new test01DF)
+//
+//  accel.io.MemResp <> DontCare
+//  accel.io.MemReq <> DontCare
+//
+//  when(state === sIdle) {
+//    cycles := 0.U
+//  }.otherwise {
+//    cycles := cycles + 1.U
+//  }
+//
+//  //Needs to be input dependent
+//  val val_a = Mux((state === sIdle), regfile(0), 0.U)
+//  val val_b = Mux((state === sIdle), regfile(1), 0.U)
+//
+//  accel.io.in.bits.data("field0") := DataBundle(val_a)
+//  accel.io.in.bits.data("field1") := DataBundle(val_b)
+//
+//  accel.io.in.bits.enable := ControlBundle.active()
+//
+//  accel.io.in.valid := false.B
+//  accel.io.out.ready := (state === sBusy)
+//
+//  io.cmd.ready  := (state === sIdle)
+//  when(io.cmd.fire) {
+//    state := sDone
+//  }
+//
+//  when(io.resp.fire()) {
+//    state := sIdle
+//  }
+//
+//  when(io.cmd.fire && doWrite) {
+//    regfile(addr) := data
+//  }
+//
+//
+//  //io.resp.valid := (state === sDone)
+//  io.resp.valid := io.cmd.valid
+//
+//  // valid response if valid command, need a response, and no stalls
+//  io.resp.bits.rd := req_rd
+//  // Must respond with the appropriate tag or undefined behavior
+//  io.resp.bits.data := regfile(addr)
+//  // Semantics is to always send out prior accumulator register value
+//
+//  io.busy := state =/= sIdle
+//
+//  // Be busy when have pending memory requests or committed possibility of pending requests
+//  io.interrupt := false.B
+//  // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
+//
+//  // MEMORY REQUEST INTERFACE
+//  io.mem.req.valid := false.B
+//  io.mem.req.bits.addr := data
+//  io.mem.req.bits.tag := addr
+//  io.mem.req.bits.cmd := M_XRD // perform a load (M_XWR for stores)
+//  io.mem.req.bits.size := log2Ceil(8).U
+//  io.mem.req.bits.signed := false.B
+//  io.mem.req.bits.data := 0.U // we're not performing any stores...
+//  io.mem.req.bits.phys := false.B
+//
+//  //  switch(state) {
+//  //    is(sIdle) {
+//  //      when(doAccel) {
+//  //        accel.io.in.valid := true.B
+//  //        state := sBusy
+//  //      }
+//  //    }
+//  //    is(sBusy) {
+//  //      when(accel.io.out.fire) {
+//  //        accelResult := accel.io.out.bits.data("field0").data
+//  //        regfile(2) := accel.io.out.bits.data("field0").data
+//  //        state := sDone
+//  //      }
+//  //    }
+//  //    is(sDone) {
+//  //      when(io.resp.fire()) {
+//  //        state := sIdle
+//  //      }
+//  //    }
+//  //  }
+//
+//
+//}
 
 
 class TranslatorExample(opcodes: OpcodeSet)(implicit p: Parameters) extends LazyRoCC(opcodes, nPTWPorts = 1) {
