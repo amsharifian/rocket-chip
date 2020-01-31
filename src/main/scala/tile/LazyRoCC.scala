@@ -400,132 +400,14 @@ class BlackBoxExampleModuleImp(outer: BlackBoxExample, blackBoxFile: String)(imp
 
 }
 
-class DandelionSimpleExample(opcodes: OpcodeSet)
+
+class DandelionExample(opcodes: OpcodeSet)
                             (val nArg: Int = 2, val nRet: Int = 1, val nEvent: Int = 1)
                             (implicit p: Parameters) extends LazyRoCC(opcodes) {
-  override lazy val module = new DandelionSimpleExampleModuleImp(this)
+  override lazy val module = new DandelionExampleModuleImp(this)
 }
 
-class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
-  with HasCoreParameters {
-
-  val sizeReg = outer.nArg + outer.nRet + outer.nEvent
-
-  val regFile = RegInit(VecInit(Seq.fill(sizeReg)(0.U(xLen.W))))
-  val eventFile = RegInit(VecInit(Seq.fill(sizeReg)(0.U(xLen.W))))
-
-  //  val cmd = Queue(io.cmd)
-  val funct = io.cmd.bits.inst.funct
-  val addrWire = io.cmd.bits.rs2(log2Up(sizeReg) - 1, 0)
-  val addrReg = RegEnable(enable = io.cmd.fire, next = io.cmd.bits.rs2(log2Up(sizeReg) - 1, 0))
-  val doWrite = funct === 0.U
-  val doRead = funct === 1.U
-  //  val doLoad = funct === 2.U
-  val doAccel = funct === 3.U
-  val memRespTag = io.mem.resp.bits.tag(log2Up(sizeReg) - 1, 0)
-  val rdReg = RegEnable(enable = io.cmd.fire, next = io.cmd.bits.inst.rd)
-
-  // datapath
-  val newData = io.cmd.bits.rs1
-  val readData = RegInit(0.U(xLen.W))
-
-  val sIdle :: sBusy :: sDone :: Nil = Enum(3)
-  val state = RegInit(sIdle)
-
-  val accel = Module(new test04DF)
-  accel.io.MemResp <> DontCare
-  accel.io.MemReq <> DontCare
-
-  for (i <- 0 until outer.nArg) {
-    accel.io.in.bits.data(s"field${i}") := DataBundle(regFile(i))
-  }
-
-  accel.io.in.bits.enable := ControlBundle.active()
-
-  accel.io.in.valid := false.B
-  accel.io.out.ready := (state === sBusy)
-
-  switch(state) {
-    is(sIdle) {
-      when(io.cmd.fire()) {
-        when(doWrite) {
-          regFile(addrWire) := newData
-          state := sDone
-        }.elsewhen(doRead) {
-          readData := regFile(addrWire)
-          state := sDone
-        }.elsewhen(doAccel) {
-          accel.io.in.valid := true.B
-          when(accel.io.in.fire) {
-            state := sBusy
-          }
-        }
-      }
-    }
-    is(sBusy) {
-      when(accel.io.out.fire) {
-        for(i <- outer.nArg until (outer.nArg+ outer.nRet)){
-          regFile(i) := accel.io.out.bits.data(s"field${i - outer.nArg}").data
-        }
-        for(i <- (outer.nArg + outer.nRet) until (outer.nArg + outer.nRet + outer.nEvent)){
-          regFile(i) := eventFile(i - (outer.nArg + outer.nRet))
-        }
-        state := sDone
-      }
-    }
-    is(sDone) {
-      when(io.resp.fire) {
-        state := sIdle
-      }
-    }
-  }
-
-  when(io.cmd.fire() && doAccel) {
-    accel.io.in.valid := true.B
-  }
-
-  when(state === sIdle) {
-    eventFile(0) := 0.U
-  }.elsewhen(state === sBusy) {
-    eventFile(0) := eventFile(0) + 1.U
-  }
-
-  // control
-  io.cmd.ready := (state === sIdle)
-  // command resolved if no stalls AND not issuing a load that will need a request
-
-  // PROC RESPONSE INTERFACE
-  io.resp.valid := (state === sDone)
-  // valid response if valid command, need a response, and no stalls
-  io.resp.bits.rd := rdReg
-  // Must respond with the appropriate tag or undefined behavior
-  io.resp.bits.data := readData
-  // Semantics is to always send out prior accumulator register value
-
-  //io.busy := io.cmd.valid
-  io.busy := (state === sDone)
-  // Be busy when have pending memory requests or committed possibility of pending requests
-  io.interrupt := false.B
-  // Set this true to trigger an interrupt on the processor (please refer to supervisor documentation)
-
-  // MEMORY REQUEST INTERFACE
-  io.mem.req.valid := false.B
-  io.mem.req.bits.addr := readData
-  io.mem.req.bits.tag := addrReg
-  io.mem.req.bits.cmd := M_XRD // perform a load (M_XWR for stores)
-  io.mem.req.bits.size := log2Ceil(8).U
-  io.mem.req.bits.signed := false.B
-  io.mem.req.bits.data := 0.U // we're not performing any stores...
-  io.mem.req.bits.phys := false.B
-}
-
-class DandelionMemoryExample(opcodes: OpcodeSet)
-                            (val nArg: Int = 2, val nRet: Int = 1, val nEvent: Int = 1)
-                            (implicit p: Parameters) extends LazyRoCC(opcodes) {
-  override lazy val module = new DandelionMemoryExampleModuleImp(this)
-}
-
-class DandelionMemoryExampleModuleImp(outer: DandelionMemoryExample)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
+class DandelionExampleModuleImp(outer: DandelionExample)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
   with HasCoreParameters {
 
   val sizeReg = outer.nArg + outer.nRet + outer.nEvent
