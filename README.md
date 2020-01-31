@@ -84,6 +84,69 @@ To generate FPGA- or VLSI-synthesizable Verilog (output will be in `vsim/generat
     $ cd vsim
     $ make verilog
 
+### Building dandelion-lib
+
+1. First build `riscv-gnu-toolchain`
+
+```bash
+git clone --recursive https://github.com/riscv/riscv-gnu-toolchain
+cd riscv-gnu-toolchain
+git submodule update --init --recursive
+./configure --prefix=/opt/riscv
+sudo make -j8
+export PATH=/opt/riscv/bin:$PATH
+export LD_LIBRARY_PATH=/opt/riscv/lib:$LD_LIBRARY_PATH
+```
+
+2. Clone and build `riscv-tools`
+
+```bash
+git clone --recursive https://github.com/riscv/riscv-tools.git
+cd riscv-tools
+export RISCV=/path/to/install/riscv/toolchain
+./build.sh
+```
+
+3. Build emulation binary
+
+```bash
+cd emulator
+make CONFIG=RoccExampleConfig
+```
+
+4. To run the bareMetal example:
+
+```bash
+git clone --recursive git@github.com:amsharifian/riscv-tests.git
+cd riscv-tests
+git submodule update --init --recursive
+autoconf
+./configure --prefix=$RISCV/target
+make
+```
+
+Output for test05 should be like the following:
+
+```
+This emulator compiled with JTAG Remote Bitbang client. To enable, use +jtag_rbb_enable=1.
+Listening on port 44983
+[INFO] Write R[0] = 0x800219d0
+[INFO] Read R[0]
+[INFO] Received 0x800219d0 (expected 0x800219d0)
+[INFO] Accel: ...
+[INFO] Read R[1]
+[INFO] Received 0xa (expected 0xa)
+a[0]: 1
+a[1]: 2
+a[2]: 3
+a[3]: 4
+a[4]: 5
+a[5]: 2
+a[6]: 4
+a[7]: 6
+a[8]: 8
+a[9]: 10
+```
 
 ### Keeping Your Repo Up-to-Date
 
