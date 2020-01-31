@@ -223,7 +223,7 @@ class WithNBreakpoints(hwbp: Int) extends Config ((site, here, up) => {
 class WithRoccExample extends Config((site, here, up) => {
   case BuildRoCC => List(
     (p: Parameters) => {
-        val accumulator = LazyModule(new AccumulatorExample(OpcodeSet.custom0, n = 4)(p))
+        val accumulator = LazyModule(new AccumulatorExample(OpcodeSet.custom0, n = 10)(p))
         accumulator
     },
     (p: Parameters) => {
