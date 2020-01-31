@@ -13,30 +13,30 @@ import freechips.rocketchip.tile._
 import freechips.rocketchip.tilelink._
 import freechips.rocketchip.util._
 
-class BaseSubsystemConfig extends Config ((site, here, up) => {
+class BaseSubsystemConfig extends Config((site, here, up) => {
   // Tile parameters
   case PgLevels => if (site(XLen) == 64) 3 /* Sv39 */ else 2 /* Sv32 */
   case XLen => 64 // Applies to all cores
   case MaxHartIdBits => log2Up(site(RocketTilesKey).size)
   // Interconnect parameters
   case SystemBusKey => SystemBusParams(
-    beatBytes = site(XLen)/8,
+    beatBytes = site(XLen) / 8,
     blockBytes = site(CacheBlockBytes))
   case ControlBusKey => PeripheryBusParams(
-    beatBytes = site(XLen)/8,
+    beatBytes = site(XLen) / 8,
     blockBytes = site(CacheBlockBytes),
-    errorDevice = Some(DevNullParams(List(AddressSet(0x3000, 0xfff)), maxAtomic=site(XLen)/8, maxTransfer=4096)),
+    errorDevice = Some(DevNullParams(List(AddressSet(0x3000, 0xfff)), maxAtomic = site(XLen) / 8, maxTransfer = 4096)),
     replicatorMask = site(MultiChipMaskKey))
   case PeripheryBusKey => PeripheryBusParams(
-    beatBytes = site(XLen)/8,
+    beatBytes = site(XLen) / 8,
     blockBytes = site(CacheBlockBytes),
     dtsFrequency = Some(100000000)) // Default to 100 MHz pbus clock
   case MemoryBusKey => MemoryBusParams(
-    beatBytes = site(XLen)/8,
+    beatBytes = site(XLen) / 8,
     blockBytes = site(CacheBlockBytes),
     replicatorMask = site(MultiChipMaskKey))
   case FrontBusKey => FrontBusParams(
-    beatBytes = site(XLen)/8,
+    beatBytes = site(XLen) / 8,
     blockBytes = site(CacheBlockBytes))
   // Additional device Parameters
   case BootROMParams => BootROMParams(contentFileName = "./bootrom/bootrom.img")
@@ -50,7 +50,7 @@ class BaseSubsystemConfig extends Config ((site, here, up) => {
 class WithNBigCores(n: Int) extends Config((site, here, up) => {
   case RocketTilesKey => {
     val big = RocketTileParams(
-      core   = RocketCoreParams(mulDiv = Some(MulDivParams(
+      core = RocketCoreParams(mulDiv = Some(MulDivParams(
         mulUnroll = 8,
         mulEarlyOut = true,
         divEarlyOut = true))),
@@ -112,25 +112,25 @@ class WithNSmallCores(n: Int) extends Config((site, here, up) => {
 class With1TinyCore extends Config((site, here, up) => {
   case XLen => 32
   case RocketTilesKey => List(RocketTileParams(
-      core = RocketCoreParams(
-        useVM = false,
-        fpu = None,
-        mulDiv = Some(MulDivParams(mulUnroll = 8))),
-      btb = None,
-      dcache = Some(DCacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 256, // 16Kb scratchpad
-        nWays = 1,
-        nTLBEntries = 4,
-        nMSHRs = 0,
-        blockBytes = site(CacheBlockBytes),
-        scratch = Some(0x80000000L))),
-      icache = Some(ICacheParams(
-        rowBits = site(SystemBusKey).beatBits,
-        nSets = 64,
-        nWays = 1,
-        nTLBEntries = 4,
-        blockBytes = site(CacheBlockBytes)))))
+    core = RocketCoreParams(
+      useVM = false,
+      fpu = None,
+      mulDiv = Some(MulDivParams(mulUnroll = 8))),
+    btb = None,
+    dcache = Some(DCacheParams(
+      rowBits = site(SystemBusKey).beatBits,
+      nSets = 256, // 16Kb scratchpad
+      nWays = 1,
+      nTLBEntries = 4,
+      nMSHRs = 0,
+      blockBytes = site(CacheBlockBytes),
+      scratch = Some(0x80000000L))),
+    icache = Some(ICacheParams(
+      rowBits = site(SystemBusKey).beatBits,
+      nSets = 64,
+      nWays = 1,
+      nTLBEntries = 4,
+      blockBytes = site(CacheBlockBytes)))))
   case RocketCrossingKey => List(RocketCrossingParams(
     crossingType = SynchronousCrossing(),
     master = TileMasterPortParams()
@@ -148,13 +148,15 @@ class WithNTrackersPerBank(n: Int) extends Config((site, here, up) => {
 // This is the number of icache sets for all Rocket tiles
 class WithL1ICacheSets(sets: Int) extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) map { r =>
-    r.copy(icache = r.icache.map(_.copy(nSets = sets))) }
+    r.copy(icache = r.icache.map(_.copy(nSets = sets)))
+  }
 })
 
 // This is the number of icache sets for all Rocket tiles
 class WithL1DCacheSets(sets: Int) extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) map { r =>
-    r.copy(dcache = r.dcache.map(_.copy(nSets = sets))) }
+    r.copy(dcache = r.dcache.map(_.copy(nSets = sets)))
+  }
 })
 
 class WithL1ICacheWays(ways: Int) extends Config((site, here, up) => {
@@ -214,7 +216,7 @@ class WithNonblockingL1(nMSHRs: Int) extends Config((site, here, up) => {
   }
 })
 
-class WithNBreakpoints(hwbp: Int) extends Config ((site, here, up) => {
+class WithNBreakpoints(hwbp: Int) extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) map { r =>
     r.copy(core = r.core.copy(nBreakpoints = hwbp))
   }
@@ -223,22 +225,43 @@ class WithNBreakpoints(hwbp: Int) extends Config ((site, here, up) => {
 class WithRoccExample extends Config((site, here, up) => {
   case BuildRoCC => List(
     (p: Parameters) => {
-        val accumulator = LazyModule(new AccumulatorExample(OpcodeSet.custom0, n = 10)(p))
-        accumulator
+      val accumulator = LazyModule(new AccumulatorExample(OpcodeSet.custom0, n = 4)(p))
+      accumulator
     },
     (p: Parameters) => {
-        val translator = LazyModule(new TranslatorExample(OpcodeSet.custom1)(p))
-        translator
+      val translator = LazyModule(new TranslatorExample(OpcodeSet.custom1)(p))
+      translator
     },
     (p: Parameters) => {
-        val counter = LazyModule(new CharacterCountExample(OpcodeSet.custom2)(p))
-        counter
+      val counter = LazyModule(new CharacterCountExample(OpcodeSet.custom2)(p))
+      counter
     },
     (p: Parameters) => {
       val blackbox = LazyModule(new BlackBoxExample(OpcodeSet.custom3, "RoccBlackBox")(p))
       blackbox
     })
 })
+
+class WithDandelionExample extends Config((site, here, up) => {
+  case BuildRoCC => List(
+    (p: Parameters) => {
+      val dandelion = LazyModule(new DandelionSimpleExample(OpcodeSet.custom0, n = 4)(p))
+      dandelion
+    },
+    (p: Parameters) => {
+      val translator = LazyModule(new TranslatorExample(OpcodeSet.custom1)(p))
+      translator
+    },
+    (p: Parameters) => {
+      val counter = LazyModule(new CharacterCountExample(OpcodeSet.custom2)(p))
+      counter
+    },
+    (p: Parameters) => {
+      val blackbox = LazyModule(new BlackBoxExample(OpcodeSet.custom3, "RoccBlackBox")(p))
+      blackbox
+    })
+})
+
 
 class WithDefaultBtb extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) map { r =>
@@ -250,7 +273,8 @@ class WithFastMulDiv extends Config((site, here, up) => {
   case RocketTilesKey => up(RocketTilesKey, site) map { r =>
     r.copy(core = r.core.copy(mulDiv = Some(
       MulDivParams(mulUnroll = 8, mulEarlyOut = (site(XLen) > 32), divEarlyOut = true)
-  )))}
+    )))
+  }
 })
 
 class WithoutMulDiv extends Config((site, here, up) => {
@@ -294,29 +318,29 @@ class WithRationalRocketTiles extends Config((site, here, up) => {
 })
 
 class WithEdgeDataBits(dataBits: Int) extends Config((site, here, up) => {
-  case MemoryBusKey => up(MemoryBusKey, site).copy(beatBytes = dataBits/8)
-  case ExtIn => up(ExtIn, site).map(_.copy(beatBytes = dataBits/8))
-  
+  case MemoryBusKey => up(MemoryBusKey, site).copy(beatBytes = dataBits / 8)
+  case ExtIn => up(ExtIn, site).map(_.copy(beatBytes = dataBits / 8))
+
 })
 
-class WithJtagDTM extends Config ((site, here, up) => {
+class WithJtagDTM extends Config((site, here, up) => {
   case ExportDebug => up(ExportDebug, site).copy(protocols = Set(JTAG))
 })
 
-class WithDebugAPB extends Config ((site, here, up) => {
+class WithDebugAPB extends Config((site, here, up) => {
   case ExportDebug => up(ExportDebug, site).copy(protocols = Set(APB))
 })
 
 
-class WithDebugSBA extends Config ((site, here, up) => {
+class WithDebugSBA extends Config((site, here, up) => {
   case DebugModuleKey => up(DebugModuleKey, site).map(_.copy(hasBusMaster = true))
 })
 
-class WithNBitPeripheryBus(nBits: Int) extends Config ((site, here, up) => {
-  case PeripheryBusKey => up(PeripheryBusKey, site).copy(beatBytes = nBits/8)
+class WithNBitPeripheryBus(nBits: Int) extends Config((site, here, up) => {
+  case PeripheryBusKey => up(PeripheryBusKey, site).copy(beatBytes = nBits / 8)
 })
 
-class WithoutTLMonitors extends Config ((site, here, up) => {
+class WithoutTLMonitors extends Config((site, here, up) => {
   case MonitorsEnabled => false
 })
 
@@ -343,10 +367,10 @@ class WithTimebase(hertz: BigInt) extends Config((site, here, up) => {
 
 class WithDefaultMemPort extends Config((site, here, up) => {
   case ExtMem => Some(MemoryPortParams(MasterPortParams(
-                      base = x"8000_0000",
-                      size = x"1000_0000",
-                      beatBytes = site(MemoryBusKey).beatBytes,
-                      idBits = 4), 1))
+    base = x"8000_0000",
+    size = x"1000_0000",
+    beatBytes = site(MemoryBusKey).beatBytes,
+    idBits = 4), 1))
 })
 
 class WithNoMemPort extends Config((site, here, up) => {
@@ -355,10 +379,10 @@ class WithNoMemPort extends Config((site, here, up) => {
 
 class WithDefaultMMIOPort extends Config((site, here, up) => {
   case ExtBus => Some(MasterPortParams(
-                      base = x"6000_0000",
-                      size = x"2000_0000",
-                      beatBytes = site(MemoryBusKey).beatBytes,
-                      idBits = 4))
+    base = x"6000_0000",
+    size = x"2000_0000",
+    beatBytes = site(MemoryBusKey).beatBytes,
+    idBits = 4))
 })
 
 class WithNoMMIOPort extends Config((site, here, up) => {
@@ -366,7 +390,7 @@ class WithNoMMIOPort extends Config((site, here, up) => {
 })
 
 class WithDefaultSlavePort extends Config((site, here, up) => {
-  case ExtIn  => Some(SlavePortParams(beatBytes = 8, idBits = 8, sourceBits = 4))
+  case ExtIn => Some(SlavePortParams(beatBytes = 8, idBits = 8, sourceBits = 4))
 })
 
 class WithNoSlavePort extends Config((site, here, up) => {

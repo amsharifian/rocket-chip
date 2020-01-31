@@ -40,6 +40,8 @@ class DualChannelDualBankConfig extends Config(
 
 class RoccExampleConfig extends Config(new WithRoccExample ++ new DefaultConfig ++ new WithAccelConfig)
 
+class DandelionExampleConfig extends Config(new WithDandelionExample ++ new DefaultConfig ++ new WithAccelConfig)
+
 class Edge128BitConfig extends Config(
   new WithEdgeDataBits(128) ++ new DefaultConfig)
 class Edge32BitConfig extends Config(
