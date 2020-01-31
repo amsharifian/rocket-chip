@@ -4,6 +4,7 @@
 package freechips.rocketchip.system
 
 import Chisel._
+import dandelion.config.WithAccelConfig
 import freechips.rocketchip.config.Config
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
@@ -37,7 +38,7 @@ class DualChannelDualBankConfig extends Config(
   new WithNMemoryChannels(2) ++
   new WithNBanks(4) ++ new DefaultConfig)
 
-class RoccExampleConfig extends Config(new WithRoccExample ++ new DefaultConfig)
+class RoccExampleConfig extends Config(new WithRoccExample ++ new DefaultConfig ++ new WithAccelConfig)
 
 class Edge128BitConfig extends Config(
   new WithEdgeDataBits(128) ++ new DefaultConfig)
