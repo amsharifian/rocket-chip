@@ -400,24 +400,29 @@ class BlackBoxExampleModuleImp(outer: BlackBoxExample, blackBoxFile: String)(imp
 
 }
 
-class DandelionSimpleExample(opcodes: OpcodeSet, val n: Int = 4)(implicit p: Parameters) extends LazyRoCC(opcodes) {
+class DandelionSimpleExample(opcodes: OpcodeSet)
+                            (val nArg: Int = 2, val nRet: Int = 1, val nEvent: Int = 1)
+                            (implicit p: Parameters) extends LazyRoCC(opcodes) {
   override lazy val module = new DandelionSimpleExampleModuleImp(this)
 }
 
 class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p: Parameters) extends LazyRoCCModuleImp(outer)
   with HasCoreParameters {
 
-  val regfile = RegInit(VecInit(Seq.fill(outer.n)(0.U(xLen.W))))
+  val sizeReg = outer.nArg + outer.nRet + outer.nEvent
+
+  val regFile = RegInit(VecInit(Seq.fill(sizeReg)(0.U(xLen.W))))
+  val eventFile = RegInit(VecInit(Seq.fill(sizeReg)(0.U(xLen.W))))
 
   //  val cmd = Queue(io.cmd)
   val funct = io.cmd.bits.inst.funct
-  val addrWire = io.cmd.bits.rs2(log2Up(outer.n) - 1, 0)
-  val addrReg = RegEnable(enable = io.cmd.fire, next = io.cmd.bits.rs2(log2Up(outer.n) - 1, 0))
+  val addrWire = io.cmd.bits.rs2(log2Up(sizeReg) - 1, 0)
+  val addrReg = RegEnable(enable = io.cmd.fire, next = io.cmd.bits.rs2(log2Up(sizeReg) - 1, 0))
   val doWrite = funct === 0.U
   val doRead = funct === 1.U
   //  val doLoad = funct === 2.U
   val doAccel = funct === 3.U
-  val memRespTag = io.mem.resp.bits.tag(log2Up(outer.n) - 1, 0)
+  val memRespTag = io.mem.resp.bits.tag(log2Up(sizeReg) - 1, 0)
   val rdReg = RegEnable(enable = io.cmd.fire, next = io.cmd.bits.inst.rd)
 
   // datapath
@@ -426,18 +431,14 @@ class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p:
 
   val sIdle :: sBusy :: sDone :: Nil = Enum(3)
   val state = RegInit(sIdle)
-  val cycles = RegInit(0.U)
 
-  val accel = Module(new test01DF)
+  val accel = Module(new test04DF)
   accel.io.MemResp <> DontCare
   accel.io.MemReq <> DontCare
 
-  //Needs to be input dependent
-  val val_a = Mux((state === sIdle), regfile(0), 0.U)
-  val val_b = Mux((state === sIdle), regfile(1), 0.U)
-
-  accel.io.in.bits.data("field0") := DataBundle(val_a)
-  accel.io.in.bits.data("field1") := DataBundle(val_b)
+  for (i <- 0 until outer.nArg) {
+    accel.io.in.bits.data(s"field${i}") := DataBundle(regFile(i))
+  }
 
   accel.io.in.bits.enable := ControlBundle.active()
 
@@ -448,10 +449,10 @@ class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p:
     is(sIdle) {
       when(io.cmd.fire()) {
         when(doWrite) {
-          regfile(addrWire) := newData
+          regFile(addrWire) := newData
           state := sDone
         }.elsewhen(doRead) {
-          readData := regfile(addrWire)
+          readData := regFile(addrWire)
           state := sDone
         }.elsewhen(doAccel) {
           accel.io.in.valid := true.B
@@ -463,8 +464,12 @@ class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p:
     }
     is(sBusy) {
       when(accel.io.out.fire) {
-        regfile(2) := accel.io.out.bits.data("field0").data
-        regfile(3) := cycles
+        for(i <- outer.nArg until (outer.nArg+ outer.nRet)){
+          regFile(i) := accel.io.out.bits.data(s"field${i - outer.nArg}").data
+        }
+        for(i <- (outer.nArg + outer.nRet) until (outer.nArg + outer.nRet + outer.nEvent)){
+          regFile(i) := eventFile(i - (outer.nArg + outer.nRet))
+        }
         state := sDone
       }
     }
@@ -480,9 +485,9 @@ class DandelionSimpleExampleModuleImp(outer: DandelionSimpleExample)(implicit p:
   }
 
   when(state === sIdle) {
-    cycles := 0.U
-  }.otherwise {
-    cycles := cycles + 1.U
+    eventFile(0) := 0.U
+  }.elsewhen(state === sBusy) {
+    eventFile(0) := eventFile(0) + 1.U
   }
 
   // control

@@ -245,7 +245,7 @@ class WithRoccExample extends Config((site, here, up) => {
 class WithDandelionExample extends Config((site, here, up) => {
   case BuildRoCC => List(
     (p: Parameters) => {
-      val dandelion = LazyModule(new DandelionSimpleExample(OpcodeSet.custom0, n = 4)(p))
+      val dandelion = LazyModule(new DandelionSimpleExample(OpcodeSet.custom0)(nArg = 3)(p))
       dandelion
     },
     (p: Parameters) => {
