@@ -4,7 +4,7 @@
 package freechips.rocketchip.system
 
 import Chisel._
-import dandelion.config.WithAccelConfig
+import dandelion.config.{DandelionAccelParams, WithAccelConfig}
 import freechips.rocketchip.config.Config
 import freechips.rocketchip.subsystem._
 import freechips.rocketchip.diplomacy._
@@ -40,7 +40,9 @@ class DualChannelDualBankConfig extends Config(
 
 class RoccExampleConfig extends Config(new WithRoccExample ++ new DefaultConfig ++ new WithAccelConfig)
 
-class DandelionExampleConfig extends Config(new WithDandelionExample ++ new DefaultConfig ++ new WithAccelConfig)
+class DandelionExampleConfig extends Config(new WithDandelionExample ++
+  new DefaultConfig ++
+  new WithAccelConfig(DandelionAccelParams(dataLen = 64)))
 
 class Edge128BitConfig extends Config(
   new WithEdgeDataBits(128) ++ new DefaultConfig)
