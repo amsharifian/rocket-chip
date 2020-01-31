@@ -47,7 +47,7 @@ class RoCCCoreIO(implicit p: Parameters) extends CoreBundle()(p) {
   val mem = new HellaCacheIO
   val busy = Output(Bool())
   val interrupt = Output(Bool())
-  val exception = Output(Bool())
+  val exception = Input(Bool())
 }
 
 class RoCCIO(val nPTWPorts: Int)(implicit p: Parameters) extends RoCCCoreIO()(p) {
@@ -445,7 +445,7 @@ class BlackBoxExampleModuleImp(outer: BlackBoxExample, blackBoxFile: String)(imp
   io.mem <> blackbox.io.rocc.mem
   io.busy := blackbox.io.rocc.busy
   io.interrupt := blackbox.io.rocc.interrupt
-  io.exception := blackbox.io.rocc.exception
+  blackbox.io.rocc.exception := io.exception
   io.ptw <> blackbox.io.rocc.ptw
   io.fpu_req <> blackbox.io.rocc.fpu_req
   blackbox.io.rocc.fpu_resp <> io.fpu_resp
